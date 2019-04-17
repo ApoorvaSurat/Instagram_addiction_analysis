@@ -1,0 +1,204 @@
+---
+title: "Grad 699"
+author: "Apoorva"
+date: "4/2/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library("stringr")
+library("GGally")
+library("corrplot")
+```
+
+
+## Pre-processing the Data: 
+```{r}
+#Assigning the column names to the variable "column":
+
+columns <- read.csv("~/Downloads/Instagram_dataset_190403/CSV/Instagram UsageAddiction - DepressionHappiness.csv") %>% colnames()
+
+# Assigning the subcolumn names to the Variable "Subcolumns":
+
+subcolumns <- read.csv("~/Downloads/Instagram_dataset_190403/CSV/Instagram UsageAddiction - DepressionHappiness.csv", skip = 1) %>% colnames()
+
+view(subcolumns)
+
+#Assigning the rest of the columns and the rows to the variable "Insta":
+
+insta <- read.csv("~/Downloads/Instagram_dataset_190403/CSV/Instagram UsageAddiction - DepressionHappiness.csv", header = F, skip = 2, na.strings = '', stringsAsFactors = F) 
+
+insta <- insta %>% mutate(indx = 1:nrow(insta))
+
+# Naming the different responses of the scales for the questions pertaining to the "Instagram Usage Scale", "Instagram addiction scale", "social_effect scale", "comparison scale"
+
+often_scale <- c('Not at all', 'Every few days', 'Once a day', 'Every few hours', 'every hour', 'every 30 minutes', 'every 10 minutes', 'every 5 minutes')
+
+time_scale <-  c('5 minutes or less', '15 minutes','30 minutes' , '1 hour', '2 hours', '3 hours','4 hours', '5 hours', '6 hours', '7 hours', '8 hours', '9 hours', '10 hours or more')
+
+addiction_scale <- c('Never', 'Rarely', 'Ocassionally', 'Frequently', 'Often', 'Always')
+social_effect <- c('Never', 'rarely', 'Sometimes', 'Often')
+comparison_scale <- c('Never', 'Rarely', 'Ocassionally', 'Frequently', 'Often', 'Very.often')
+
+
+# gathering the responses for the question "How often do you check Instagram"and ordering them based on the often_scale created earlier. Also dropping the na's:
+
+how_often <- insta %>% select(indx, V10:V17) %>% gather('key', 'how_often', -indx) %>% drop_na() %>% arrange(indx) %>% select(-key)
+
+how_often$how_often <- ordered(how_often$how_often, often_scale, often_scale)
+
+view(how_often)
+
+# gathering the responses for the question "Overall how long do you sepnd on Instagram"and ordering them based on the time_scale created earlier. Also dropping the na's:
+
+timespend <- insta %>% select(indx, V18:V30) %>% gather('key', 'timespend', -indx) %>% drop_na() %>% arrange(indx) %>% select(-key)
+
+timespend$timespend <- ordered(timespend$timespend , time_scale, time_scale)
+
+view(timespend)
+
+# Gathering the responses for the ethnicity question that were spread accross multiple columns. Also dropping the na's:
+
+ethnicity <- insta %>% select(indx, V158:V164) %>% gather('key', 'ethnicity', -indx) %>% drop_na() %>% arrange(indx) %>% select(-key)
+
+# # Gathering the gender options within the same column and dropping the na's:
+
+gender <- insta %>% select(indx, V156:V157) %>% gather('key', 'gender', -indx) %>% drop_na() %>% arrange(indx) %>% select(-key)
+
+#Adding the soretd columns: time_spend, how_often, ethnicity and gender to the Variable "results" by the index column:
+  
+results <- full_join(how_often, timespend, by='indx') %>% full_join(ethnicity, by='indx') %>% full_join(gender, by='indx')
+
+# Segregating the rest of the questions using start column for each question's responses:
+
+colindx <- c(31, 37, 43, 49, 55, 61, 67, 73, 79, 85, 91, 97, 103, 109, 115, 121, 125, 129, 133, 137, 141, 145, 150, 155)
+
+# Adding the gathered responses of the questions to the "results" dataset by the index column. Also dropping na's: 
+
+for (i in 1:(length(colindx)-1)){
+  results <- results %>% full_join(insta %>% select(indx, colindx[i]:(colindx[i+1]-1)) %>% 
+                         gather('key', !!paste0("Q",colindx[i]), -indx) %>% drop_na() 
+                       %>% arrange(indx) %>% select(-key), by='indx')
+}
+
+results <- results %>% mutate_at(vars(Q145, Q150), funs(str_replace_all(., '\\d. ', ''))) 
+
+```
+
+
+```{r}
+
+# convert the character columns to ordered factors for individual scales and applying it to the results dataset:
+
+results <- results %>% mutate_at(.vars=vars(Q31:Q115), .funs= funs(ordered(., addiction_scale, addiction_scale)))
+results <- results %>% mutate_at(.vars=vars(Q121:Q141), .funs= funs(ordered(., social_effect, social_effect)))
+results <- results %>% mutate_at(.vars=vars(Q145:Q150), .funs= funs(ordered(., comparison_scale, comparison_scale)))
+
+
+str(results)
+
+
+# replacing NA values with the most common value in each column:
+
+for (i in 1:ncol(results)){
+  results[,i] <- replace_na(results[,i], which.max(table(results[,i])) %>% names())
+}
+
+#converting factors to integer to calculate the scores for each scale:
+
+resnumeric <- results %>% mutate_if(is.factor,  as.integer)
+
+# Adding scores of the wellbeing scale, usage scale, addiction scale and comparison scale to the resnumeric dataset :
+
+
+resnumeric <- resnumeric %>% mutate(wellbeing = -Q121 + Q125 - Q129 + Q133 + Q137 - Q141)
+
+resnumeric <- resnumeric %>% mutate(usage = how_often + timespend)
+
+resnumeric <- resnumeric %>% mutate(addiction = Q31 + Q37 + Q43 + Q49 + Q55 + Q61 + Q67 + Q73 + Q79 + Q85 + Q91 + Q97 + Q103 + Q109 + Q115)
+
+resnumeric <- resnumeric %>% mutate(comparison = Q145 + Q150)
+
+# Framing a new scale out of the Instagram addiction scale by removing few columns:
+
+resnumeric<- resnumeric %>% mutate(addiction_revised = Q31 + Q37 + Q43 + Q55 + Q61 + Q85 + Q91 + Q109 + Q115)
+
+```
+
+## Exploratory data analysis:
+```{r}
+resnumeric %>% ggplot(aes(x=gender, y=addiction_revised)) + geom_boxplot()
+
+resnumeric %>% ggplot(aes(x=gender, y=usage, fill=gender)) + geom_boxplot()
+
+resnumeric %>% group_by(ethnicity) %>% summarise(usage = mean(usage)) %>% 
+ggplot(aes(x=reorder(ethnicity, usage), y= usage)) + geom_bar(stat='identity', fill='salmon') + coord_flip() + xlab('ethnicity')
+
+resnumeric %>% ggplot(aes(x=addiction)) + geom_histogram(bins=20)
+
+resnumeric %>% ggplot(aes(x=usage)) + geom_histogram(bins=15)
+
+```
+
+## checking for multi-collinearity among the variables:
+```{r}
+
+resnumeric %>% select(wellbeing, usage, addiction, comparison) %>% ggpairs()
+
+vif(lm(wellbeing ~ usage + addiction + comparison, data=resnumeric))
+
+summary(lm(wellbeing ~ addiction + comparison + usage, data=resnumeric))
+
+```
+
+## Realtionship between Usage and Addiction:
+```{r}
+resnumeric %>% ggplot(aes(x=addiction, y=usage)) + geom_point() + geom_smooth(method='lm')
+summary(lm(addiction~ usage, data=resnumeric))
+# the linear regression and p-value of usage shows the strng relationship between addiction and usage 
+
+summary(lm(wellbeing ~ addiction + comparison, data=resnumeric))
+# Removed the usage variable as it was not signicant with wellbeing
+```
+## Revised addiction scale
+```{r}
+resnumeric %>% select(wellbeing, usage, addiction_revised , comparison) %>% ggpairs()
+summary(lm(wellbeing ~ addiction_revised + comparison, data=resnumeric))
+
+```
+
+## Addcition vs Comparison:
+```{r}
+resnumeric %>% ggplot(aes(x=comparison, y=addiction)) + geom_point() + geom_smooth(method='lm')
+# There is strong correlation between addiciton and comparison 
+summary(lm(addiction ~ comparison, data=resnumeric))
+```
+
+## Addcited vs Non-addicted users :
+```{r}
+# Segregating addcted vs non-addicted users:
+
+resnumeric <- resnumeric %>% mutate(addicted = ifelse(addiction > 38, 'Yes', 'No'))
+
+resnumeric %>% ggplot(aes(x=addicted, y=wellbeing)) + geom_boxplot()
+
+# t.test for categorical addicted vs non addicted users:
+
+t.test(wellbeing ~ addicted, data = resnumeric)
+#proves that the well-being of non-addicted users is higher on an average compared to addcited users.
+
+resnumeric %>% count(addicted)
+```
+
+# Comparison vs addiciton:
+```{r}
+summary(lm(addiction~comparison, data = resnumeric))
+```
